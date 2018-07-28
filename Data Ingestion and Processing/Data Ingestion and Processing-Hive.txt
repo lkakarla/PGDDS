@@ -1,0 +1,614 @@
+--:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::--
+-- HIVE ASSIGNMENT - New York City Taxi & Limousine Commission (TLC) 
+--:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::--
+
+
+--:::::::::::::::::::::::::::::::::::::::::::::::::::::::--
+-- Create Schema and Table Based on Provided CSV files.
+--:::::::::::::::::::::::::::::::::::::::::::::::::::::::--
+
+--Create Schema named 'TLS'
+CREATE DATABASE IF NOT EXISTS tlc;
+
+--Set tlc as the current database
+USE tlc;
+
+
+--Create Generic table based on whole data
+CREATE EXTERNAL TABLE IF NOT EXISTS tlc.tlc_trip_data_plain (text_string string) 
+LOCATION 's3://lk-ds-s3/tlc';
+
+
+--Count no of trip records.
+SELECT COUNT(1) FROM tlc.tlc_trip_data_plain;
+--18793083
+
+--Create an External table based on data type. 
+--Exclude top 2 rows having header and blank row.
+
+CREATE EXTERNAL TABLE IF NOT EXISTS tlc.tlc_trip_data(
+`VendorID` BIGINT,
+`tpep_pickup_datetime` TIMESTAMP,
+`tpep_dropoff_datetime` TIMESTAMP,
+`passenger_count` INT,
+`trip_distance` DOUBLE,
+`RatecodeID` INT,
+`store_and_fwd_flag` string,
+`PULocationID` INT,
+`DOLocationID` INT,
+`payment_type` INT,
+`fare_amount` DOUBLE,
+`extra` DOUBLE,
+`mta_tax` DOUBLE,
+`tip_amount` DOUBLE,
+`tolls_amount` DOUBLE,
+`improvement_surcharge` DOUBLE,
+`total_amount` DOUBLE) 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+LOCATION 's3://lk-ds-s3/tlc'
+TBLPROPERTIES ("skip.header.line.count"="2");
+
+
+--Fetch few rows
+SELECT * FROM tlc.tlc_trip_data LIMIT 10;
+
+--Check number of rows in the table.
+SELECT COUNT(1) FROM tlc.tlc_trip_data;
+
+-- 18793083 rows present in both the CSV files .
+
+
+
+
+
+--:::::::::::::::::::::::::::::::--
+-- Basic Data Quality Checks
+--:::::::::::::::::::::::::::::::--
+
+
+----------------------------------------------------------------------------------------------------------------------------
+--Q1. How many records has each TPEP provider provided? Write a query that summarises the number of records of each provider.
+----------------------------------------------------------------------------------------------------------------------------
+
+
+SELECT 
+    CASE VendorID 
+         WHEN 1 THEN 'Creative Mobile Technologies, LLC'
+         WHEN 2 THEN 'VeriFone Inc'
+         ELSE VendorID END AS Vendor,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+GROUP BY VendorID;
+
+
+--No of records has each TPEP provider 
+--------------------------------------------
+--Creative Mobile Technologies, LLC   --> 8447149
+--VeriFone Inc                        --> 10345930
+
+
+-----------------------------------------------------------------------------------------------
+--Q2. The data provided is for months November and December only. Check whether the data is consistent, and if not, identify the data quality issues. Mention all data quality issues in comments.
+-----------------------------------------------------------------------------------------------
+
+-- Data Quality Check on Year and Month
+
+SELECT YEAR(tpep_pickup_datetime) as PICKUP_YEAR,
+       MONTH(tpep_pickup_datetime)  as PICKUP_MONTH, 
+       YEAR(tpep_dropoff_datetime)  as DROPOFF_YEAR, 
+       MONTH(tpep_dropoff_datetime)  as DROPOFF_MONTH, 
+       COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+GROUP BY YEAR(tpep_pickup_datetime),MONTH(tpep_pickup_datetime), YEAR(tpep_dropoff_datetime), MONTH(tpep_dropoff_datetime)
+ORDER BY PICKUP_YEAR, PICKUP_MONTH ASC;
+
+-- 1. The data consists trip records for other months(like January, February, March, October etc) other than November and December. 
+-- 2. The data consists trip records for other years (2001, 2003, 2008, 2009, 2041) other than 2017 
+
+
+-- Data Quality Check on RatecodeID
+
+SELECT 
+    CASE RatecodeID 
+             WHEN 1 THEN 'Standard rate'
+             WHEN 2 THEN 'JFK'
+             WHEN 3 THEN 'Newark'
+             WHEN 4 THEN 'Nassau or Westchester'
+             WHEN 5 THEN 'Negotiated fare'
+             WHEN 6 THEN 'Group ride'
+             ELSE RatecodeID END AS Rate_Code,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+GROUP BY RatecodeID;
+
+-- There are 178 records with RateCodeID as 99, which is invalid RateCodeID.
+
+
+
+
+
+-- Data Quality Check on passenger_count
+
+SELECT passenger_count, 
+       COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+GROUP BY passenger_count;
+
+-- There is 1 record with passender count as 192, which is not valid.
+-- There are 108970 records with passender count as 0
+
+
+
+
+-- Data Quality Check on store_and_fwd_flag
+SELECT 
+    CASE store_and_fwd_flag 
+             WHEN 'Y' THEN 'store and forward trip'
+             WHEN 'N' THEN 'not a store and forward trip'
+             ELSE store_and_fwd_flag END AS store_and_fwd_flag,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+GROUP BY store_and_fwd_flag;
+
+-- No data issues with store_and_fwd_flag data
+
+
+
+
+
+-- Data Quality Check on payment_type
+
+SELECT 
+    CASE payment_type 
+             WHEN 1 THEN 'Credit card'
+             WHEN 2 THEN 'Cash'
+             WHEN 3 THEN 'No charge'
+             WHEN 4 THEN 'Dispute'
+             WHEN 5 THEN 'Unknown'
+             WHEN 6 THEN 'Voided trip'
+             ELSE payment_type END AS Payment_Type,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+GROUP BY payment_type;
+
+-- No data issues with payment_type data
+
+
+
+
+
+
+--Checking for Negative Values in "fare_amount", "extra", "mta_tax", "tip_amount", "tolls_amount", "improvement_surcharge", "total_amount"
+
+SELECT COUNT(*)
+FROM tlc.tlc_trip_data 
+WHERE 1 = CASE 
+          WHEN trip_distance < 0 OR 
+          fare_amount < 0 OR 
+          extra < 0 OR 
+          mta_tax < 0 OR 
+          tip_amount < 0 OR 
+          tolls_amount < 0 OR 
+          improvement_surcharge < 0 OR 
+          total_amount < 0
+          THEN 1
+          ELSE 0
+          END;
+
+
+-- There are 9381 records with NEGATIVE values in "fare_amount", "extra", "mta_tax", "tip_amount", "tolls_amount", "improvement_surcharge", "total_amount" values
+
+
+
+
+
+
+--Checking for NULL values
+
+SELECT COUNT(*) 
+FROM tlc.tlc_trip_data 
+WHERE 1 = CASE 
+          WHEN VendorID IS NULL OR 
+          tpep_pickup_datetime IS NULL OR 
+          tpep_dropoff_datetime IS NULL OR 
+          passenger_count IS NULL OR 
+          trip_distance IS NULL OR 
+          RatecodeID IS NULL OR 
+          store_and_fwd_flag IS NULL OR 
+          PULocationID IS NULL OR 
+          DOLocationID IS NULL OR 
+          payment_type IS NULL OR 
+          fare_amount IS NULL OR 
+          extra IS NULL OR 
+          mta_tax IS NULL OR 
+          tip_amount IS NULL OR 
+          tolls_amount IS NULL OR 
+          improvement_surcharge IS NULL OR 
+          total_amount IS NULL
+          THEN 1
+          ELSE 0
+          END;
+
+-- 0 records with NULL values
+
+
+
+-- CONCLUSION - DATA QUALITY ISSUES:
+------------------------------------------
+-- 1. The data consists trip records for other months(like January, February, March, October etc) other than November and December. 
+-- 2. The data consists trip records for other years (2001, 2003, 2008, 2009, 2041) other than 2017 
+-- 3. There are 178 records with RateCodeID as 99, which is invalid RateCodeID.
+-- 4. There is one record with passender count as 192
+-- 5. There are 108970 records with passender count as 0
+-- 6. There are 9381 records with NEGATIVE values in "fare_amount", "extra", "mta_tax", "tip_amount", "tolls_amount", "improvement_surcharge", "total_amount values"
+
+
+
+
+-----------------------------------------------------------------------------------------------
+--Q3. You might have encountered unusual or erroneous rows in the dataset. Can you conclude which vendor is doing a bad job in providing the records?
+-----------------------------------------------------------------------------------------------
+
+--Below query returns, number of records having trip_distance less than 0, where as fare_amount is greater than zero,  grouped by Vendor
+
+SELECT CASE VendorID 
+         WHEN 1 THEN 'Creative Mobile Technologies, LLC'
+         WHEN 2 THEN 'VeriFone Inc'
+         ELSE VendorID END AS Vendor,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+WHERE trip_distance <= 0 
+AND fare_amount > 0
+GROUP BY VendorID;
+
+--Creative Mobile Technologies, LLC  -- 67615 records
+--VeriFone Inc                       -- 48158  records
+
+
+
+--Below query returns, number of records having passenger_count as 0, where as fare_amount & trip_distance is greater than zero, grouped by Vendor
+
+SELECT CASE VendorID 
+         WHEN 1 THEN 'Creative Mobile Technologies, LLC'
+         WHEN 2 THEN 'VeriFone Inc'
+         ELSE VendorID END AS Vendor,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data
+WHERE passenger_count = 0 
+AND fare_amount > 0
+AND trip_distance > 0 
+GROUP BY VendorID;  
+
+--Creative Mobile Technologies, LLC  -- 107196
+--VeriFone Inc                       -- 66 
+
+
+
+-- CONCLUSION
+-------------
+--Based on data quality checks, Vendor "Creative Mobile Technologies, LLC"  is doing a bad job in providing the records.
+
+
+
+
+--::::::::::::::--
+--Analysis-I
+--::::::::::::::--
+
+--ASSUMPTIONS
+--Considered only November and December 2017 data only
+--Ignored records having passenger_count as 0 & 192
+--Considered records having RateCodeID as 1,2,3,4,5,6
+
+
+-- PARTITION THE DATA
+-- Created a partitioned table based on Pickup month and year. 
+-- Applied filters to ignore invalid records based on assumptions stated above.
+
+CREATE EXTERNAL TABLE IF NOT EXISTS tlc.tlc_trip_data_partitioned_year_month(
+`VendorID` BIGINT,
+`tpep_pickup_datetime` TIMESTAMP,
+`tpep_dropoff_datetime` TIMESTAMP,
+`passenger_count` INT,
+`trip_distance` DOUBLE,
+`RatecodeID` INT,
+`store_and_fwd_flag` string,
+`PULocationID` INT,
+`DOLocationID` INT,
+`payment_type` INT,
+`fare_amount` DOUBLE,
+`extra` DOUBLE,
+`mta_tax` DOUBLE,
+`tip_amount` DOUBLE,
+`tolls_amount` DOUBLE,
+`improvement_surcharge` DOUBLE,
+`total_amount` DOUBLE) 
+PARTITIONED BY (pickup_year int, pickup_month int)
+LOCATION 's3://lk-ds-s3/tlc_partition_year_month';
+
+SET hive.exec.dynamic.partition=true;
+SET hive.exec.dynamic.partition.mode=nonstrict;
+
+INSERT OVERWRITE TABLE tlc.tlc_trip_data_partitioned_year_month PARTITION(pickup_year, pickup_month)
+SELECT VendorID, 
+       tpep_pickup_datetime, 
+       tpep_dropoff_datetime, 
+       passenger_count, 
+       trip_distance, 
+       RatecodeID,
+       store_and_fwd_flag, 
+       PULocationID, 
+       DOLocationID, 
+       payment_type, 
+       fare_amount, 
+       extra, 
+       mta_tax, 
+       tip_amount,
+       tolls_amount, 
+       improvement_surcharge, 
+       total_amount, 
+       YEAR(tpep_pickup_datetime) as pickup_year, 
+       MONTH(tpep_pickup_datetime) as pickup_month
+FROM tlc.tlc_trip_data
+WHERE YEAR(tpep_pickup_datetime) = 2017
+AND MONTH(tpep_pickup_datetime) IN (11, 12)
+AND passenger_count NOT IN (0, 192)
+AND RateCodeID IN (1,2,3,4,5,6);
+
+
+-----------------------------------------------------------------------------------------------
+--Q1. Compare the average fare for November and December.
+-----------------------------------------------------------------------------------------------
+
+--Below query returns average fare for November and December.
+
+SELECT pickup_month as pickup_month, 
+       AVG(fare_amount) as average_fare
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE fare_amount > 0 
+GROUP BY pickup_month;
+
+
+
+-- CONCLUSION
+-------------
+-- The average fare for November and December.
+-- November -- 13.15712825922728
+-- December -- 12.951832478937046
+
+--November month has more average fare compare to December month.
+
+
+-----------------------------------------------------------------------------------------------
+--Q2. Explore the ‘number of passengers per trip’ - how many trips are made by each level of ‘Passenger_count’? Do most people travel solo or with other people?
+-----------------------------------------------------------------------------------------------
+
+--Below query returns number of trips based on passenger_count.
+
+SELECT passenger_count as passenger_count, 
+       COUNT(1) as trip_count
+FROM tlc.tlc_trip_data_partitioned_year_month
+GROUP BY passenger_count
+ORDER BY trip_count DESC;
+
+
+--Trip count based on ‘Passenger_count’
+-----------------------------------------
+--Passenger Count 1  --> 13251021 Trips
+--Passenger Count 2  --> 2816116 Trips
+--Passenger Count 3  --> 810767 Trips
+--Passenger Count 4  --> 398846 Trips
+--Passenger Count 5  --> 875823 Trips
+--Passenger Count 6  --> 531002 Trips
+--Passenger Count 7  --> 75 Trips
+--Passenger Count 8  --> 60 Trips
+--Passenger Count 9  --> 56 Trips
+
+
+-- CONCLUSION
+-------------
+-- 13251021 trip records having passenger_count as 1. Based on trip count, most of the people are travelling solo.
+
+
+-----------------------------------------------------------------------------------------------
+--Q3. Which is the most preferred mode of payment?
+-----------------------------------------------------------------------------------------------
+
+--Below query returns number of trips based on mode of payment.
+
+SELECT 
+    CASE payment_type 
+             WHEN 1 THEN 'Credit card'
+             WHEN 2 THEN 'Cash'
+             WHEN 3 THEN 'No charge'
+             WHEN 4 THEN 'Dispute'
+             WHEN 5 THEN 'Unknown'
+             WHEN 6 THEN 'Voided trip'
+             ELSE payment_type END AS Payment_Type,
+    COUNT(1) as trip_count
+FROM tlc.tlc_trip_data_partitioned_year_month
+GROUP BY payment_type
+ORDER BY trip_count DESC;
+
+
+--Trip count based on Payment_Type
+--------------------------------------------
+--Payment Type : Credit card  --> 12566569
+--Payment Type : Cash         --> 5991332
+--Payment Type : No charge    --> 98924
+--Payment Type : Dispute      --> 26941
+
+
+-- CONCLUSION
+-------------------
+-- 12566569 trip records having Payment_Type as 'Credit card'. Based on trip count, Credit card is the most preferred mode of payment.
+
+
+
+
+-----------------------------------------------------------------------------------------------
+--Q4. What is the average tip paid? Compare the average tip with the 25th, 50th and 75th percentiles and comment whether the ‘average tip’ is a representative statistic (of the central tendency) of ‘tip amount paid’.
+-----------------------------------------------------------------------------------------------
+
+--Below query returns Average tip_amount paid
+
+SELECT AVG(tip_amount) as average_tip
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE tip_amount >= 0
+AND fare_amount  > 0;
+
+-- Average tip_amount paid
+-- 1.8520566381386747
+
+
+--Below query returns 25th, 50th and 75th percentiles of tip amount
+
+SELECT percentile_approx(tip_amount, array(0.25, 0.5, 0.75)) 
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE tip_amount >= 0
+AND fare_amount  > 0;
+
+-- 25th, 50th and 75th percentiles of tip amount
+--[0.0,1.36,2.45]
+
+
+
+
+-- CONCLUSION
+-------------------
+-- Average tip_amount paid       : 1.85
+-- 50th percentile of tip amount : 1.36
+-- The ‘average tip’ is not a representative statistic (of the central tendency) of ‘tip amount paid’.
+
+
+
+
+-----------------------------------------------------------------------------------------------
+--Q5. Explore the ‘Extra’ (charge) variable - what is the fraction of total trips where an extra charge is levied?
+-----------------------------------------------------------------------------------------------
+
+--Below query returns the total trips where an extra charge is levied and fraction of it.
+
+SELECT  SUM(IF(extra > 0, 1, 0)) as Trips_With_Extra_Charge,  
+        SUM(IF(extra > 0, 1, 0))/COUNT(*) as Fraction_of_Total_Trips
+FROM tlc.tlc_trip_data_partitioned_year_month;
+
+
+-- CONCLUSION
+-------------------
+-- Total trips where an extra charge is levied : 8632862
+-- Fraction of Total trips where an extra charge is levied : 0.4620514943293552 (46%)
+
+
+
+
+
+
+
+--::::::::::::::--
+--Analysis-II
+--::::::::::::::--
+
+
+-----------------------------------------------------------------------------------------------
+--Q1. What is the correlation between the number of passengers and tip paid? Do multiple travellers pay more compared to solo travellers?
+-----------------------------------------------------------------------------------------------
+
+--Below query returns the correlation between the number of passengers and tip paid
+
+SELECT CORR(passenger_count, tip_amount)
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE fare_amount > 0
+AND tip_amount >= 0;
+
+
+-- CONCLUSION
+-------------------
+-- Correlation between the number of passengers and tip paid: -0.003995619558672951
+-- It indicates Weak Negative Correlation.
+-- It means as number of passengers increases, the tip amount decreases slightly.
+-- Based on correlation value, solo travellers pay more compared to multiple travellers.
+
+
+-----------------------------------------------------------------------------------------------
+--Q2. Create five buckets of ‘tip paid’: [0-5), [5-10), [10-15) , [15-20) and >=20. Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
+-----------------------------------------------------------------------------------------------
+
+--Below query returns the fraction of trips falling in each bucket.
+
+SELECT (SUM(IF(tip_amount >=0 AND tip_amount < 5, 1,0))/COUNT(*))*100 AS bin_0_5,
+       (SUM(IF(tip_amount >=5 AND tip_amount < 10, 1,0))/COUNT(*))*100 AS bin_5_10,
+       (SUM(IF(tip_amount >=10 AND tip_amount < 15, 1,0))/COUNT(*))*100 AS bin_10_15,
+       (SUM(IF(tip_amount >=15 AND tip_amount < 20, 1,0))/COUNT(*))*100 AS bin_15_20,
+       (SUM(IF(tip_amount >=20, 1,0))/COUNT(*))*100 AS bin_above_20
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE tip_amount >= 0
+AND fare_amount  > 0;
+ 
+
+-- CONCLUSION
+-------------------
+-- Fraction of Trips Falling in Bucket [0-5)   - 92.13307649089872
+-- Fraction of Trips Falling in Bucket [5-10)  - 5.639244078498313
+-- Fraction of Trips Falling in Bucket [10-15) - 1.8834992840917972
+-- Fraction of Trips Falling in Bucket [15-20) - 0.24025548262593555
+-- Fraction of Trips Falling in Bucket >=20    - 0.10392466388523658
+
+ 
+-----------------------------------------------------------------------------------------------
+--Q3. Which month has a greater average ‘speed’ - November or December? Note that the variable ‘speed’ will have to be derived from other metrics.
+-----------------------------------------------------------------------------------------------
+
+--Below query returns average ‘speed’ for November & December 2017.
+
+SELECT pickup_month, 
+       AVG(trip_distance/((UNIX_TIMESTAMP(tpep_dropoff_datetime) - UNIX_TIMESTAMP(tpep_pickup_datetime))/3600)) as Avg_Speed_MPH
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE trip_distance >= 0
+AND YEAR(tpep_dropoff_datetime) IN (2017, 2018)
+GROUP BY pickup_month;
+
+
+-- CONCLUSION
+-------------------
+-- November Month has average ‘speed’ as 12.724203044881108 Miles Per Hour
+-- December Month has average ‘speed’ as 12.666660906570444 Miles Per Hour
+-- Based on average ‘speed’ values, December Month has a greater average ‘speed’
+
+
+
+-----------------------------------------------------------------------------------------------
+--Q4. Analyse the average speed of the most happening days of the year i.e. 31st December (New year’s eve) and 25th December (Christmas Eve) and compare it with the overall average. 
+-----------------------------------------------------------------------------------------------
+
+
+--Below query returns average ‘speed’ on  31st December 2017 & 25th December 2017.
+
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP(tpep_pickup_datetime), 'dd-MMM-yyyy') as Happening_Day, 
+       AVG(trip_distance/((UNIX_TIMESTAMP(tpep_dropoff_datetime) - UNIX_TIMESTAMP(tpep_pickup_datetime))/3600)) as Avg_Speed_MPH
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE trip_distance >= 0
+AND pickup_month = 12
+AND DAY(tpep_pickup_datetime) IN (25,31)
+AND YEAR(tpep_dropoff_datetime) IN (2017, 2018)
+GROUP BY FROM_UNIXTIME(UNIX_TIMESTAMP(tpep_pickup_datetime), 'dd-MMM-yyyy');
+
+
+--Below query returns overall average ‘speed’ for both November & December 2017.
+
+SELECT AVG(trip_distance/((UNIX_TIMESTAMP(tpep_dropoff_datetime) - UNIX_TIMESTAMP(tpep_pickup_datetime))/3600)) as Avg_Speed_MPH
+FROM tlc.tlc_trip_data_partitioned_year_month
+WHERE trip_distance >= 0
+AND YEAR(tpep_dropoff_datetime) IN (2017, 2018);
+
+
+-- CONCLUSION
+-------------------
+-- On 25-Dec-2017, the average ‘speed’ was 16.768849262166295 Miles Per Hour
+-- On 31-Dec-2017, the average ‘speed’ was 13.991607668107761 Miles Per Hour
+-- Overall average ‘speed’ was 12.695099246035138
+-- Based on average ‘speed’ values analysis, the average speed  was vewry high on 25-Dec-2017.
+
+---------------------------------------------------------------------------------
